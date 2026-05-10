@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-ssr
+*.local
+playwright-report
+test-results
+.env
+bun.lock
+*.tsbuildinfo
+.opencode/
+/.cocoindex_code/
+.legacy/
