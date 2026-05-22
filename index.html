@@ -3,11 +3,57 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>LLMPlayground – Open-Source AI Chat, Roleplay & Coding Playground</title>
+  <meta name="description" content="LLMPlayground is an open-source AI playground for chat, roleplay, coding assistance, personas, and provider testing in one fast web app.">
+  <meta name="keywords" content="AI playground, LLM playground, AI chat, roleplay AI, coding assistant, OpenAI compatible, gpt4free">
+  <meta name="author" content="LLMPlayground contributors">
+  <meta name="robots" content="index, follow">
+  <meta name="application-name" content="LLMPlayground">
   <meta name="theme-color" content="#0f0f0f">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>LLMPlayground</title>
+  <meta name="apple-mobile-web-app-title" content="LLMPlayground">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="LLMPlayground">
+  <meta property="og:title" content="LLMPlayground – Open-Source AI Chat, Roleplay & Coding Playground">
+  <meta property="og:description" content="Use chat, roleplay, coding, personas, and provider tools in a lightweight open-source AI playground.">
+  <meta property="og:url" content="https://llmplayground.net/">
+  <meta property="og:image" content="https://llmplayground.net/img/logo.svg">
+  <meta property="og:image:alt" content="LLMPlayground logo">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="LLMPlayground – Open-Source AI Chat, Roleplay & Coding Playground">
+  <meta name="twitter:description" content="Open-source AI playground for chatting, roleplay, coding help, personas, and model provider testing.">
+  <meta name="twitter:image" content="https://llmplayground.net/img/logo.svg">
+  <link rel="canonical" href="https://llmplayground.net/">
+  <link rel="icon" href="img/logo.svg" type="image/svg+xml">
+  <link rel="shortcut icon" href="img/logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="img/logo.svg">
+  <link rel="manifest" href="site.webmanifest">
   <link rel="stylesheet" href="css/coding-editor.css">
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "LLMPlayground",
+      "url": "https://llmplayground.net/",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "Web",
+      "description": "An open-source AI playground for chat, roleplay, coding assistance, personas, and provider testing.",
+      "image": "https://llmplayground.net/img/logo.svg",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "featureList": [
+        "AI chat",
+        "Roleplay personas",
+        "Coding assistant",
+        "Provider configuration",
+        "Model playground"
+      ]
+    }
+  </script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -173,6 +219,7 @@
       font-family: inherit;
       outline: none;
       transition: border-color 0.15s;
+      appearance: none;
       -webkit-appearance: none;
     }
     input[type="checkbox"].tool-checkbox {

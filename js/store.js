@@ -221,7 +221,7 @@ const Store = (() => {
                     conversations.concat(get('chats'));
                     conversations.forEach((c, i)=>{
                       c.added = c.added || Date.now();
-                      c.updated = c.updated || c.added || Date.now() + i;
+                      c.updated = c.updated || c.added;
                       c.items = c.messages || c.items || [];
                       delete c.messages;
                     })
