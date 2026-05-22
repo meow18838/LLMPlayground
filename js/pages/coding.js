@@ -238,7 +238,7 @@ const CodingPage = (() => {
     const chat = {
       id, type: 'coding', title: framework.translate('New Session'),
       items: [],
-      createdAt: Date.now(),
+      added: Date.now(),
     };
     Store.upsertChat(chat);
     loadChat(id);
@@ -469,7 +469,8 @@ const CodingPage = (() => {
       let fullThinking = '';
       const images = [];
       for await (const chunk of API.streamChat(provider, apiMessages, model, {
-        temperature: 0.3,
+        temperature: settings.codingTemperature,
+        maxRetries: settings.maxRetries || 0,
         signal: abortController.signal,
       })) {
         if (chunk.type === 'thinking') {

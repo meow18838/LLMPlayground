@@ -31,6 +31,8 @@ const API = (() => {
     /image/i,
   ];
 
+  let mcpClient = null;
+
   function isImageModel(modelName) {
     if (!modelName) return false;
     return IMAGE_MODEL_PATTERNS.some(p => p.test(modelName));
@@ -46,6 +48,37 @@ const API = (() => {
     return { chat, image };
   }
 
+  function getMCPClient() {
+    if (typeof MCPClient === 'undefined') return null;
+    if (mcpClient) return mcpClient;
+    try {
+      mcpClient = new MCPClient();
+      if (mcpClient.servers.length === 0) {
+        try {
+          mcpClient.addServer({ name: 'Default', url: 'https://mcp.g4f.space' });
+        } catch {}
+      }
+      mcpClient.fetchAllTools()
+        .then(async r => mcpClient.getAllTools())
+        .then(tools=>console.log('Fetched MCP tools:', tools))
+        .catch(err => console.warn('Error fetching MCP tools:', err));
+      return mcpClient;
+    } catch {
+      return null;
+    }
+  }
+
+  function getSelectedMCPToolsForAPI() {
+    const client = getMCPClient();
+    if (!client) return null;
+    try {
+      const tools = client.getSelectedToolsForAPI();
+      return Array.isArray(tools) && tools.length > 0 ? tools : null;
+    } catch {
+      return null;
+    }
+  }
+
   function isEndpointError(body) {
     if (!body) return false;
     const msg = (body.error?.message || body.message || body.detail || '').toLowerCase();
@@ -59,19 +92,36 @@ const API = (() => {
 
   async function probeEndpoint(url, fetchOpts) {
     const r = await fetch(url, fetchOpts);
-    if (r.status === 404 || r.status === 405) return false;
+    if (r.status === 404 || r.status === 405) return { ok: false, status: r.status };
     if (r.status >= 200 && r.status < 500) {
       try {
         const text = await r.text();
         const json = JSON.parse(text);
-        if (isEndpointError(json)) return false;
+        if (isEndpointError(json)) return { ok: false, status: r.status };
       } catch {}
-      return true;
+      return { ok: true, status: r.status };
     }
-    return false;
+    return { ok: false, status: r.status };
   }
 
-  async function detectEndpointType(baseUrl, apiKey) {
+  async function checkProvider(provider) {
+    console.log('Checking provider:', provider);
+    if (provider.apiKey && provider.checkUrl && !provider.isNotProviderKey) {
+      let result = null;
+      try {
+        const headers = { 'Authorization': `Bearer ${provider.apiKey}` };
+        result = await fetch(provider.checkUrl, { headers });
+        if (result.ok) return 'openai';
+      } catch {}
+      if (result && result.status === 401) {
+        throw Object.assign(new Error('Unauthorized'), { status: 401 });
+      }
+    }
+    console.log('Detecting endpoint type for provider:', provider);
+    return detectEndpointType(provider.baseUrl, provider.apiKey, provider.defaultModel);
+  }
+
+  async function detectEndpointType(baseUrl, apiKey, model) {
     const headers = { 'Content-Type': 'application/json' };
     if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
     const cleanUrl = baseUrl.replace(/\/$/, '');
@@ -82,7 +132,7 @@ const API = (() => {
         run: () => probeEndpoint(cleanUrl + '/chat/completions', {
           method: 'POST',
           headers,
-          body: JSON.stringify({ model: 'test', messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
+          body: JSON.stringify({ model: model || 'test', messages: [{ role: 'user', content: 'hi' }] }),
         }),
       },
       {
@@ -92,7 +142,7 @@ const API = (() => {
           return probeEndpoint(cleanUrl.replace(/\/v1$/, '') + '/v1/messages', {
             method: 'POST',
             headers: anthropicHeaders,
-            body: JSON.stringify({ model: 'test', messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
+            body: JSON.stringify({ model: model || 'test', messages: [{ role: 'user', content: 'hi' }] }),
           });
         },
       },
@@ -101,7 +151,7 @@ const API = (() => {
         run: () => probeEndpoint(cleanUrl + '/responses', {
           method: 'POST',
           headers,
-          body: JSON.stringify({ model: 'test', input: 'hi', max_output_tokens: 1 }),
+          body: JSON.stringify({ model: model || 'test', input: 'hi', max_output_tokens: 1 }),
         }),
       },
       {
@@ -110,21 +160,22 @@ const API = (() => {
           const gUrl = cleanUrl.replace(/\/v1beta$/, '') + '/v1beta/models';
           const googleUrl = apiKey ? `${gUrl}?key=${apiKey}` : gUrl;
           const r = await fetch(googleUrl);
-          if (r.status === 404 || r.status === 405) return false;
+          if (r.status === 404 || r.status === 405) return { ok: false, status: r.status };
           try {
             const data = await r.json();
-            if (data.models && Array.isArray(data.models)) return true;
-            if (isEndpointError(data)) return false;
+            if (data.models && Array.isArray(data.models)) return { ok: true, status: r.status };
+            if (isEndpointError(data)) return { ok: false, status: r.status };
           } catch {}
-          return r.status >= 200 && r.status < 400;
+          return { ok: r.status >= 200 && r.status < 400, status: r.status };
         },
       },
     ];
 
     for (const probe of probes) {
       try {
-        const ok = await probe.run();
-        if (ok) return probe.type;
+        const result = await probe.run();
+        if (result.status === 401) throw Object.assign(new Error('Unauthorized'), { status: 401 });
+        if (result.ok) return probe.type;
       } catch {}
     }
 
@@ -146,7 +197,7 @@ const API = (() => {
     const res = await fetchWithRetry(`${provider.baseUrl}/models`, { headers });
     if (!res.ok) throw new Error(`Failed to fetch models: ${res.status}`);
     const data = await res.json();
-    return (data.data || data.models || []).map(m => typeof m === 'string' ? m : m.id).filter(Boolean);
+    return (data.data || data.models || []).filter(m => m.id || m);
   }
 
   async function fetchModelsAnthropic(provider) {
@@ -216,7 +267,7 @@ const API = (() => {
       headers,
       body: JSON.stringify(body),
       signal: options.signal,
-    });
+    }, options.maxRetries || 0);
 
     if (!res.ok) {
       const err = await res.text();
@@ -254,7 +305,7 @@ const API = (() => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       signal: options.signal,
-    });
+    }, options.maxRetries || 0);
 
     if (!res.ok) {
       const err = await res.text();
@@ -302,7 +353,7 @@ const API = (() => {
       }
     }
 
-    const lastUserMsg = [...items].reverse().find(m => m.role === 'user');
+    const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
     const prompt = lastUserMsg?.content || '';
     if (prompt) {
       try {
@@ -334,7 +385,7 @@ const API = (() => {
     /try again/i,
   ];
 
-  async function fetchWithRetry(url, opts, maxRetries = 5) {
+  async function fetchWithRetry(url, opts, maxRetries = 0) {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const res = await fetch(url, opts);
       if (res.status === 429 && attempt < maxRetries) {
@@ -374,17 +425,81 @@ const API = (() => {
     }
   }
 
+  function normalizeToolCall(toolCall) {
+    if (!toolCall) return null;
+    const normalized = { ...toolCall };
+    if (!normalized.function && normalized.tool_call) normalized.function = normalized.tool_call;
+    if (!normalized.function && normalized.function_call) normalized.function = normalized.function_call;
+    return normalized;
+  }
+
+  function mergeToolCalls(accumulator, toolCalls) {
+    if (!toolCalls) return accumulator;
+    const calls = Array.isArray(toolCalls) ? toolCalls : [toolCalls];
+    for (const call of calls) {
+      const normalized = normalizeToolCall(call);
+      if (!normalized) continue;
+      const key = normalized.id || `${normalized.function?.name || 'tool'}:${normalized.index ?? ''}`;
+      if (!accumulator[key]) {
+        accumulator[key] = normalized;
+        continue;
+      }
+      const existing = accumulator[key];
+      const existingFn = existing.function || {};
+      const incomingFn = normalized.function || {};
+      existing.function = existingFn;
+      if (incomingFn.name) existing.function.name = incomingFn.name;
+      if (incomingFn.arguments) {
+        existing.function.arguments = (existingFn.arguments || '') + incomingFn.arguments;
+      }
+      if (incomingFn.description) existing.function.description = incomingFn.description;
+    }
+    return accumulator;
+  }
+
+  async function executeToolCalls(toolCalls) {
+    if (!toolCalls || toolCalls.length === 0) return [];
+    return getMCPClient().executeToolCalls(toolCalls.map(normalizeToolCall).filter(Boolean));
+  }
+
+  function filterMessages(messages) {
+    const assistantFiltered = [];
+    let lastMessageIsAssistant = false;
+    for (const m of messages) {
+      if (m.error) continue;
+      if (m.role === 'assistant') {
+        if (!lastMessageIsAssistant) {
+          lastMessageIsAssistant = true;
+          assistantFiltered.push(m);
+        }
+      } else {
+        lastMessageIsAssistant = false;
+        assistantFiltered.push(m);
+      }
+    }
+    for (let i = assistantFiltered.length - 1; i >= 0; i--) {
+      const m = assistantFiltered[i];
+      if (m.role === 'assistant') {
+        assistantFiltered.pop();
+      } else {
+        break;
+      }
+    }
+    return assistantFiltered.map(m => ({ role: m.role, content: m.content, tool_calls: m.tool_calls, name: m.name }));
+  }
+
   async function* streamChatOpenAI(provider, messages, model, options = {}) {
     const headers = { 'Content-Type': 'application/json' };
     if (provider.apiKey) headers['Authorization'] = `Bearer ${provider.apiKey}`;
-
+  
     const body = {
       model: model || provider.defaultModel || 'llama-4-scout',
-      messages: messages.map(m => ({ role: m.role, content: m.content })),
-      stream: true,
-      temperature: options.temperature ?? 0.7,
+      messages: filterMessages(messages),
+      stream: true
     };
+    if (options.temperature !== undefined) body.temperature = options.temperature;
     if (options.maxTokens) body.max_tokens = options.maxTokens;
+    if (options.reasoningEffort) body.reasoning_effort = options.reasoningEffort;
 
     if (options.tools) {
       body.tools = options.tools;
@@ -396,7 +511,7 @@ const API = (() => {
       headers,
       body: JSON.stringify(body),
       signal: options.signal,
-    });
+    }, options.maxRetries || 0);
 
     if (!res.ok) {
       const err = await res.text();
@@ -434,7 +549,11 @@ const API = (() => {
             if (delta?.reasoning_content) yield { type: 'thinking', content: delta.reasoning_content };
             if (delta?.reasoning) yield { type: 'thinking', content: delta.reasoning };
             if (delta?.content) yield { type: 'text', content: delta.content };
-            if (delta?.tool_calls) yield { type: 'tool_calls', tool_calls: delta.tool_calls };
+
+            let toolCalls = delta?.tool_calls;
+            if (!toolCalls && delta?.function_call) toolCalls = [delta.function_call];
+            if (!toolCalls && delta?.tool_call) toolCalls = [delta.tool_call];
+            if (toolCalls) yield { type: 'tool_calls', tool_calls: Array.isArray(toolCalls) ? toolCalls : [toolCalls] };
           } catch {}
         }
       }
@@ -464,9 +583,9 @@ const API = (() => {
       model: model || provider.defaultModel || 'claude-sonnet-4-20250514',
       messages: nonSystemMsgs,
       stream: true,
-      max_tokens: options.maxTokens || 16384,
-      temperature: options.temperature ?? 0.7,
     };
+    if (options.temperature !== undefined) body.temperature = options.temperature;
+    if (options.maxTokens) body.max_tokens = options.maxTokens;
 
     if (systemMsg) body.system = systemMsg.content;
 
@@ -479,7 +598,7 @@ const API = (() => {
       headers,
       body: JSON.stringify(body),
       signal: options.signal,
-    });
+    }, options.maxRetries || 0);
 
     if (!res.ok) {
       const err = await res.text();
@@ -543,9 +662,9 @@ const API = (() => {
     }));
 
     const genConfig = {
-      temperature: options.temperature ?? 0.7,
       thinkingConfig: { thinkingBudget: 8000 },
     };
+    if (options.temperature !== undefined) genConfig.temperature = options.temperature;
     if (options.maxTokens) genConfig.maxOutputTokens = options.maxTokens;
 
     const body = {
@@ -566,7 +685,7 @@ const API = (() => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       signal: options.signal,
-    });
+    }, options.maxRetries || 0);
 
     if (!res.ok) {
       const err = await res.text();
@@ -626,7 +745,6 @@ const API = (() => {
       input,
       stream: true,
     };
-
     if (options.maxTokens) body.max_output_tokens = options.maxTokens;
     if (options.temperature !== undefined) body.temperature = options.temperature;
 
@@ -635,7 +753,7 @@ const API = (() => {
       headers,
       body: JSON.stringify(body),
       signal: options.signal,
-    });
+    }, options.maxRetries || 0);
 
     if (!res.ok) {
       const err = await res.text();
@@ -690,16 +808,21 @@ const API = (() => {
 
     const body = {
       model: model || provider.defaultModel || 'llama-4-scout',
-      messages,
-      temperature: options.temperature ?? 0.7,
+      messages: messages.map(m => ({ role: m.role, content: m.content })),
     };
+    if (options.temperature !== undefined) body.temperature = options.temperature;
     if (options.maxTokens) body.max_tokens = options.maxTokens;
+    if (options.reasoningEffort) body.reasoning_effort = options.reasoningEffort;
+    if (options.tools) {
+      body.tools = options.tools;
+      body.tool_choice = options.toolChoice || 'auto';
+    }
 
     const res = await fetchWithRetry(`${provider.baseUrl}/chat/completions`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
-    });
+    }, options.maxRetries || 0);
 
     if (!res.ok) {
       const err = await res.text();
@@ -742,6 +865,7 @@ const API = (() => {
 
   return {
     fetchModels, streamChat, chat, detectEndpointType, extractThinkingFromText,
-    generateImage, isImageModel, classifyModels, ENDPOINT_TYPES,
+    executeToolCalls, mergeToolCalls, normalizeToolCall, getMCPClient, getSelectedMCPToolsForAPI,
+    generateImage, isImageModel, classifyModels, checkProvider, ENDPOINT_TYPES,
   };
 })();

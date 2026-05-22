@@ -24,10 +24,16 @@ const ChatPage = (() => {
     layout.appendChild(main);
     container.appendChild(layout);
 
-    Store.getChats().then(chats => {
-      const chatList = chats.filter(c => c.type === 'chat');
-      if (chatList.length > 0) loadChat(chatList[0].id);
-      else newChat();
+    Store.getLastChat().then(lastChat => {
+      const importChatId = localStorage.getItem('openChatId');
+      if (importChatId) {
+        localStorage.removeItem('openChatId');
+        loadChat(importChatId);
+      } else if (lastChat) {
+        loadChat(lastChat.id);
+      } else {
+        newChat();
+      }
     });
   }
 
@@ -55,7 +61,10 @@ const ChatPage = (() => {
         <button class="btn btn-primary btn-sm" id="new-chat-btn">+ New</button>
       </div>
       <div class="sidebar-list" id="chat-list"></div>`;
-    sidebar.querySelector('#new-chat-btn').addEventListener('click', newChat);
+    sidebar.querySelector('#new-chat-btn').addEventListener('click', () => {
+      newChat();
+      closeSidebar();
+    });
     refreshSidebar(sidebar);
     return sidebar;
   }
@@ -127,10 +136,28 @@ const ChatPage = (() => {
     clearBtn.textContent = 'Clear';
     clearBtn.addEventListener('click', clearMessages);
 
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'btn btn-secondary btn-sm';
+    saveBtn.textContent = 'Save';
+    saveBtn.addEventListener('click', () => saveChatAsFile());
+
+    const playBtn = document.createElement('button');
+    playBtn.className = 'btn btn-secondary btn-sm';
+    playBtn.textContent = 'Play';
+    playBtn.addEventListener('click', () => playChatAsAudio());
+
+    const qrBtn = document.createElement('button');
+    qrBtn.className = 'btn btn-secondary btn-sm';
+    qrBtn.textContent = 'QR';
+    qrBtn.addEventListener('click', () => generateChatQRCode());
+
     toolbar.appendChild(sidebarBtn);
     toolbar.appendChild(titleInput);
     toolbar.appendChild(modelSel);
     toolbar.appendChild(clearBtn);
+    toolbar.appendChild(saveBtn);
+    toolbar.appendChild(playBtn);
+    toolbar.appendChild(qrBtn);
 
     const messagesWrap = document.createElement('div');
     messagesWrap.className = 'messages-wrap';
@@ -148,7 +175,7 @@ const ChatPage = (() => {
 
   function newChat() {
     const id = Store.newId();
-    const chat = { id, type: 'chat', title: framework.translate('New Chat'), items: [], createdAt: Date.now() };
+    const chat = { id, type: 'chat', title: framework.translate('New Chat'), items: [], added: Date.now() };
     Store.upsertChat(chat);
     loadChat(id);
   }
@@ -158,6 +185,16 @@ const ChatPage = (() => {
     Store.getChat(id).then(chat => {
       console.log('Loaded chat:', chat);
       if (!chat) return;
+      const sendBtn = document.querySelector('.input-bar .send-btn');
+      if (sendBtn) {
+        if (!chat.items.some(m => m.role === 'user')) {
+          sendBtn.textContent = sendBtn.dataset.label;
+          sendBtn.disabled = true;
+        } else {
+          sendBtn.textContent = framework.translate('Regenerate');
+          sendBtn.disabled = false;
+        }
+      }
 
       const modelSel = document.querySelector('#chat-toolbar .model-select');
       if (modelSel) {
@@ -183,9 +220,10 @@ const ChatPage = (() => {
     }
     messages.forEach(msg => {
       if (msg.role === 'system') return;
-      const el = Components.renderMessage(msg, { editable: false, deletable: true });
+      const el = Components.renderMessage(msg, { editable: false, deletable: true, audio: true });
       el.querySelector('[data-action="delete"]')?.addEventListener('click', () => deleteMessage(msg.id));
       el.querySelector('[data-action="copy"]')?.addEventListener('click', () => Components.copyMessageContent(msg));
+      el.querySelector('[data-action="speak"]')?.addEventListener('click', () => playMessageAudio(msg.content));
       wrap.appendChild(el);
     });
     wrap.scrollTop = wrap.scrollHeight;
@@ -200,12 +238,15 @@ const ChatPage = (() => {
     const settings = Store.getSettings();
     const model = currentModel || provider.defaultModel;
 
-    const userMsg = { id: Store.newId(), role: 'user', content: text, ts: Date.now() };
-    chat.items.push(userMsg);
-    Store.upsertChat(chat);
+    let userMsg = null;
+    if (text) {
+      userMsg = { id: Store.newId(), role: 'user', content: text, ts: Date.now() };
+      chat.items.push(userMsg);
+      Store.upsertChat(chat);
+    }
 
     const wrap = document.getElementById('chat-messages');
-    if (wrap) {
+    if (wrap && userMsg) {
       const emptyState = wrap.querySelector('.empty-state');
       if (emptyState) emptyState.remove();
       const userEl = Components.renderMessage(userMsg, { deletable: true });
@@ -216,7 +257,7 @@ const ChatPage = (() => {
     }
 
     const inputBar = document.getElementById('chat-input-bar');
-    abortController = new AbortController();
+    abortController = null;
     isStreaming = true;
     inputBar?.setStreaming(true, () => { abortController?.abort(); });
 
@@ -229,52 +270,84 @@ const ChatPage = (() => {
     if (wrap) { wrap.appendChild(assistantEl); wrap.scrollTop = wrap.scrollHeight; }
 
     let typingRemoved = false;
+    let collectedToolCalls = {};
 
     try {
       let fullContent = '';
       let fullThinking = '';
       const images = [];
-      for await (const chunk of API.streamChat(provider, chat.items.filter(m => m.role !== 'system' || true), model, {
-        temperature: settings.temperature,
-        maxTokens: settings.maxTokens,
-        signal: abortController.signal,
-      })) {
-        if (chunk.type === 'thinking') {
-          fullThinking += chunk.content;
-          Components.updateThinkingBlock(assistantEl, fullThinking);
-          if (!assistantEl.querySelector('.thinking-streaming')) {
-            const tb = assistantEl.querySelector('.thinking-block');
-            if (tb) tb.classList.add('thinking-streaming');
-          }
-          if (wrap) wrap.scrollTop = wrap.scrollHeight;
-        }
-        if (chunk.type === 'text') {
-          if (!typingRemoved) {
-            Components.removeTypingIndicator(assistantEl);
-            typingRemoved = true;
-          }
-          fullContent += chunk.content;
-          contentEl.innerHTML = Components.renderMarkdown(fullContent);
-          if (wrap) wrap.scrollTop = wrap.scrollHeight;
-        }
-        if (chunk.type === 'image') {
-          if (!typingRemoved) {
-            Components.removeTypingIndicator(assistantEl);
-            typingRemoved = true;
-          }
-          images.push({ url: chunk.url, b64: chunk.b64, revisedPrompt: chunk.revisedPrompt });
-          const src = chunk.url || (chunk.b64 ? `data:image/png;base64,${chunk.b64}` : '');
-          if (src) {
-            let imagesContainer = assistantEl.querySelector('.msg-images');
-            if (!imagesContainer) {
-              imagesContainer = document.createElement('div');
-              imagesContainer.className = 'msg-images';
-              assistantEl.appendChild(imagesContainer);
+      let messages = [...chat.items];
+      let doStreamChat = true;
+      const selectedTools = API.getSelectedMCPToolsForAPI();
+      while (doStreamChat) {
+        doStreamChat = false;
+        abortController = new AbortController();
+        for await (const chunk of API.streamChat(provider, messages, model, {
+          ...settings,
+          tools: selectedTools,
+          signal: abortController.signal,
+        })) {
+          if (chunk.type === 'thinking') {
+            fullThinking += chunk.content;
+            Components.updateThinkingBlock(assistantEl, fullThinking);
+            if (!assistantEl.querySelector('.thinking-streaming')) {
+              const tb = assistantEl.querySelector('.thinking-block');
+              if (tb) tb.classList.add('thinking-streaming');
             }
-            const imgWrap = Components.createImageWithLoader(src, 'Generated image', chunk.revisedPrompt);
-            imagesContainer.appendChild(imgWrap);
             if (wrap) wrap.scrollTop = wrap.scrollHeight;
           }
+          if (chunk.type === 'tool_calls') {
+            API.mergeToolCalls(collectedToolCalls, chunk.tool_calls);
+            continue;
+          }
+          if (chunk.type === 'text') {
+            if (!typingRemoved) {
+              Components.removeTypingIndicator(assistantEl);
+              typingRemoved = true;
+            }
+            fullContent += chunk.content;
+            contentEl.innerHTML = Components.renderMarkdown(fullContent);
+            if (wrap) wrap.scrollTop = wrap.scrollHeight;
+          }
+          if (chunk.type === 'image') {
+            if (!typingRemoved) {
+              Components.removeTypingIndicator(assistantEl);
+              typingRemoved = true;
+            }
+            images.push({ url: chunk.url, b64: chunk.b64, revisedPrompt: chunk.revisedPrompt });
+            const src = chunk.url || (chunk.b64 ? `data:image/png;base64,${chunk.b64}` : '');
+            if (src) {
+              let imagesContainer = assistantEl.querySelector('.msg-images');
+              if (!imagesContainer) {
+                imagesContainer = document.createElement('div');
+                imagesContainer.className = 'msg-images';
+                assistantEl.appendChild(imagesContainer);
+              }
+              const imgWrap = Components.createImageWithLoader(src, 'Generated image', chunk.revisedPrompt);
+              imagesContainer.appendChild(imgWrap);
+              if (wrap) wrap.scrollTop = wrap.scrollHeight;
+            }
+          }
+        }
+
+        const toolCalls = Object.values(collectedToolCalls);
+        if (toolCalls.length > 0) {
+          collectedToolCalls = {};
+          fullContent += Components.formatToolCalls(toolCalls);
+          try {
+            const toolResults = await API.executeToolCalls(toolCalls);
+            const resultsText = toolResults.map(result => `\n\n✅ **Tool Result:** \`${result.name}\`\n\`\`\`json\n${JSON.stringify(JSON.parse(result.content), null, 2)}\n\`\`\``).join('\n\n');
+            fullContent += resultsText;
+            messages = [...messages, {
+                role: 'assistant',
+                content: '',
+                tool_calls: toolCalls
+            }, ...toolResults];
+            doStreamChat = true;
+          } catch (err) {
+            fullContent += `\n\n❌ **Tool Execution Error:** ${err?.message || String(err)}`;
+          }
+          contentEl.innerHTML = Components.renderMarkdown(fullContent);
         }
       }
 
@@ -290,8 +363,10 @@ const ChatPage = (() => {
       assistantMsg.thinking = fullThinking;
       assistantMsg.images = images;
     } catch (err) {
+      console.error('Streaming error:', err);
       if (err.name !== 'AbortError') {
-        assistantMsg.content = `Error: ${err.message}`;
+        assistantMsg.error = true;
+        assistantMsg.content = `**${framework.translate('Error')}**: ${err.message}`;
         contentEl.innerHTML = Components.renderMarkdown(assistantMsg.content);
         Components.toast(err.message, 'error');
       }
@@ -305,13 +380,12 @@ const ChatPage = (() => {
     if (streamingBlock) streamingBlock.classList.remove('thinking-streaming');
 
     assistantEl.querySelector('[data-action="copy"]')?.addEventListener('click', () => Components.copyMessageContent(assistantMsg));
-
-    chat.items.push(assistantMsg);
-    if (chat.title === framework.translate('New Chat') && chat.items.length === 2) {
+    if (chat.title === framework.translate('New Chat') && chat.items.length <= 2) {
       chat.title = text.slice(0, 40) + (text.length > 40 ? '…' : '');
       const titleInput = document.querySelector('#chat-toolbar .title-input');
       if (titleInput) titleInput.value = chat.title;
     }
+    chat.items.push(assistantMsg);
     Store.upsertChat(chat);
     refreshSidebar();
 
@@ -338,6 +412,134 @@ const ChatPage = (() => {
       Store.upsertChat(chat);
       renderMessages([]);
     });
+  }
+
+  function createDownloadFile(filename, content) {
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  function saveChatAsFile() {
+    if (!currentChatId) return;
+    Store.getChat(currentChatId).then(chat => {
+      if (!chat) return;
+      const lines = [`Chat: ${chat.title || 'Untitled'}`, `Created: ${new Date(chat.added).toLocaleString()}`, ''];
+      chat.items.forEach(item => {
+        const role = item.role === 'user' ? 'You' : item.role === 'assistant' ? 'Assistant' : item.role;
+        lines.push(`${role} [${item.id || ''}] @ ${new Date(item.ts).toLocaleString()}`);
+        lines.push(item.content || '');
+        lines.push('');
+      });
+      const filename = `${(chat.title || 'chat').replace(/[^a-z0-9_-]/gi, '_').slice(0, 40)}.txt`;
+      createDownloadFile(filename, lines.join('\n'));
+      Components.toast('Chat saved as file', 'success');
+    });
+  }
+
+  async function fetchAudioUrl(text) {
+    const payload = text.trim().slice(0, 1000);
+    if (!payload) throw new Error('No text to play');
+    const url = `https://g4f.space/ai/audio/${encodeURIComponent(payload)}`;
+    const headers = {};
+    const token = localStorage.getItem('session_token');
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    } else {
+      return url;
+    }
+    const response = await fetch(url, { method: 'GET', headers });
+    if (!response.ok) {
+      throw new Error(`Audio request failed (${response.status})`);
+    }
+    const blob = await response.blob();
+    return URL.createObjectURL(blob);
+  }
+
+  async function playMessageAudio(text) {
+    try {
+      const audioUrl = await fetchAudioUrl(text);
+      const audio = new Audio(audioUrl);
+      audio.onended = () => { URL.revokeObjectURL(audioUrl); Components.toast('Audio playback finished', 'success'); };
+      audio.onerror = () => { URL.revokeObjectURL(audioUrl); Components.toast('Audio playback failed', 'error'); };
+      await audio.play();
+      Components.toast('Playing message audio', 'info');
+    } catch (err) {
+      Components.toast(err.message || 'Failed to play audio', 'error');
+    }
+  }
+
+  async function playChatAsAudio() {
+    if (!currentChatId) return;
+    const chat = await Store.getChat(currentChatId);
+    if (!chat || !chat.items || chat.items.length === 0) {
+      Components.toast('Nothing to play', 'info');
+      return;
+    }
+    const text = chat.items
+      .map(item => {
+        const role = item.role === 'user' ? 'You said:' : item.role === 'assistant' ? 'Assistant replied:' : `${item.role}:`;
+        return `${role} ${item.content || ''}`;
+      })
+      .join(' \n ');
+    try {
+      const audioUrl = await fetchAudioUrl(text);
+      const audio = new Audio(audioUrl);
+      audio.onended = () => { URL.revokeObjectURL(audioUrl); Components.toast('Audio playback finished', 'success'); };
+      audio.onerror = () => { URL.revokeObjectURL(audioUrl); Components.toast('Audio playback failed', 'error'); };
+      await audio.play();
+      Components.toast('Playing chat as audio', 'info');
+    } catch (err) {
+      Components.toast(err.message || 'Failed to play chat audio', 'error');
+    }
+  }
+
+  function openQrcodeDb(mode) {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open('chat-db', 1);
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result.transaction('conversations', mode));
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('conversations')) {
+          db.createObjectStore('conversations', { keyPath: 'id' });
+        }
+      };
+    });
+  }
+
+  async function saveConversationForQRCode(chat) {
+    const tx = await openQrcodeDb('readwrite');
+    const store = tx.objectStore('conversations');
+    store.put({
+      id: chat.id || Store.newId(),
+      title: chat.title,
+      items: chat.items,
+      added: chat.added || Date.now(),
+      updated: Date.now(),
+      type: 'chat'
+    });
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async function generateChatQRCode() {
+    if (!currentChatId) return;
+    const chat = await Store.getChat(currentChatId);
+    if (!chat || !chat.items || chat.items.length === 0) {
+      Components.toast('No chat content available', 'info');
+      return;
+    }
+    await saveConversationForQRCode(chat);
+    const qrcodeUrl = new URL('qrcode.html#' + encodeURIComponent(chat.id), window.location.href).href;
+    window.open(qrcodeUrl, '_blank');
   }
 
   async function deleteChat(id) {

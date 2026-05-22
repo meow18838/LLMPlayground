@@ -16,57 +16,97 @@ fetch('js/snippets.json')
     })
     .catch(() => {});
 
-framework.translate = (text) => {
-    const stripText = text.trim();
+function escapeHtml(text) {
+    const element = document.createElement('div');
+    if (text) {
+        element.innerText = text;
+        return element.innerHTML;
+    }
+    return '';
+}
+
+framework.translate = (text, check = false) => {
+    const stripText = text.trim().replace(/\s+/g, ' ');
     if (stripText) {
         const startWithSpace = text.startsWith(" ");
         const endWithSpace = text.endsWith(" ");
-        if (stripText in framework.translations && framework.translations[stripText]) {
-            return (startWithSpace ? " " : "") + framework.translations[stripText] + (endWithSpace ? " " : "");
+        if (!newTranslations.includes(stripText)) {
+            newTranslations.push(stripText);
+            if (check) {
+                console.log(`New snippet found: \`${stripText}\``);
+            }
         }
-        stripText && !newTranslations.includes(stripText) ? newTranslations.push(stripText) : null;
+        if (stripText in framework.translations && framework.translations[stripText]) {
+            return (startWithSpace ? " " : "") + escapeHtml(framework.translations[stripText]) + (endWithSpace ? " " : "");
+        }
     }
     return text;
 };
 
-function countWords(text) {
-    return text.trim().match(/[\w\u4E00-\u9FA5]+/gu)?.length || 0;
+function hasWords(text) {
+    return text.trim().match(/[a-zA-Z]+/gu)?.length > 0;
 }
 
 framework.translationKey = "translations" + document.location.pathname;
-framework.translations = JSON.parse(localStorage.getItem(framework.translationKey) || "{}");
+framework.translations = {};
+try {
+    const storedTranslations = localStorage.getItem(framework.translationKey);
+    if (storedTranslations) {
+        framework.translations = JSON.parse(storedTranslations);
+        const btn = document.getElementById("btn-translate");
+        if (btn) {
+            btn.innerHTML += "&nbsp;✕";
+            btn.title = framework.translate('Reset Translations');
+            btn.onclick = function () {
+                deleteTranslations();
+                window.location.reload();
+            };
+        }
+    }
+} catch (e) {
+    console.error("Failed to parse stored translations:", e);
+}
 
-framework.translateElements = function (elements = null) {
+framework.translateElements = function (check = null) {
     if (!framework.translations) {
         return;
     }
-    elements = elements || document.querySelectorAll("*");
+    const elements = check || document.querySelectorAll("*");
     elements.forEach(function (element) {
         let parent = element.parentElement;
-        if (element.classList.contains("notranslate") || parent && parent.classList.contains("notranslate")) {
+        if (element.classList.contains("notranslate")) {
             return;
         }
-        if (["SCRIPT", "STYLE"].includes(element.tagName)) {
+        if (element.parentElement?.classList.contains("notranslate")) {
+            return;
+        }
+        if (element.dataset.translated === "true") {
+            return;
+        }
+        if (["SCRIPT", "STYLE", "OPTION", "OUTPUT", "TABLE", "TR", "I"].includes(element.tagName)) {
             return;
         }
         element.childNodes.forEach(child => {
             if (child.nodeType === Node.TEXT_NODE) {
-                if (countWords(child.textContent) > 0) {
-                    child.textContent = framework.translate(child.textContent);
+                if (hasWords(child.textContent)) {
+                    child.textContent = framework.translate(child.textContent, !!check);
                 }
             }
         });
         if (element.alt) {
-            element.alt = framework.translate(element.alt);
+            element.alt = framework.translate(element.alt, !!check);
         }
         if (element.title) {
-            element.title = framework.translate(element.title);
+            element.title = framework.translate(element.title, !!check);
         }
         if (element.placeholder) {
-            element.placeholder = framework.translate(element.placeholder);
+            element.placeholder = framework.translate(element.placeholder, !!check);
         }
         if (element.classList.contains("title-input") && element.value) {
-            element.value = framework.translate(element.value);
+            element.value = framework.translate(element.value, !!check);
+        }
+        if (check) {
+            element.dataset.translated = "true";
         }
     });
 };
@@ -90,13 +130,13 @@ function btnTranslate(btn) {
                 window.location.reload();
             } else {
                 clearInterval(interval);
-                btn.textContent = framework.translate('🌐 Translate');
+                btn.textContent = framework.translate('🌐');
                 btn.disabled = false;
             }
         })
         .catch(() => {
             clearInterval(interval);
-            btn.textContent = framework.translate('🌐 Translate');
+            btn.textContent = framework.translate('🌐');
             btn.disabled = false;
         });
 }
@@ -151,7 +191,7 @@ async function query(prompt, options = { json: false, cache: true }) {
             console.warn(`Error ${response.status} with URL: \`${secondPartyUrl}\`\n ${await response.clone().text()}`);
         }
         const firstPartyUrl = `https://g4f.space/ai/pollinations/${encodeURIComponent(prompt)}?${encodedParams}`;
-        response = await fetch(firstPartyUrl, { headers: { "Authorization": `Bearer ${["pk", "_7X0QLj0xijSd0xj7"].join("")}` } });
+        response = await fetch(firstPartyUrl, { headers: { "Authorization": `Bearer ${["sk", "_fPLVqg5vAQRCZWzPoYUG6dzSu5czowKf"].join("")}` } });
         if (!response.ok) {
             console.warn(`Error ${response.status} with URL: \`${firstPartyUrl}\`\n ${await response.clone().text()}`);
             return response;
@@ -176,18 +216,18 @@ framework.translateAll = async () => {
     if (navigator.language === "en" || navigator.language.startsWith("en-")) {
         return false;
     }
-    let allTranslations = { ...framework.translations };
-    for (const text of newTranslations) {
+    let allTranslations = {};
+    newTranslations.forEach(text => {
         allTranslations[text] = "";
-    }
-    for (const key in allTranslations) {
-        allTranslations[key] = "";
-    }
-    const jsonTranslations = "\n\n```json\n" + JSON.stringify(allTranslations, null, 4) + "\n```";
+    });
+    const jsonTranslations = "\n\n```json\n" + JSON.stringify(allTranslations, null, 2) + "\n```";
     const languageName = navigator.language === "de" ? 'de-DE' : navigator.language === "es" ? 'es-ES' : navigator.language;
     const jsonLanguage = "`" + languageName + "`";
     const prompt = `Translate the following text snippets in a JSON object to ${jsonLanguage}: ${jsonTranslations} (iso-code)`;
     const response = await query(prompt, true);
+    if (!response.ok) {
+        return false;
+    }
     let translations = await response.json();
     if (translations[navigator.language] && typeof translations[navigator.language] === 'object' && Object.keys(translations[navigator.language]).length > 0) {
         translations = translations[navigator.language];

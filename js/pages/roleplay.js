@@ -163,7 +163,7 @@ const RoleplayPage = (() => {
 
   function newChat() {
     const id = Store.newId();
-    const chat = { id, type: 'roleplay', title: framework.translate('New Session'), items: [], personaId: null, createdAt: Date.now() };
+    const chat = { id, type: 'roleplay', title: framework.translate('New Session'), items: [], personaId: null, added: Date.now() };
     Store.upsertChat(chat);
     loadChat(id);
   }
@@ -285,8 +285,7 @@ const RoleplayPage = (() => {
       let fullThinking = '';
       const images = [];
       for await (const chunk of API.streamChat(provider, chat.items, model, {
-        temperature: settings.temperature,
-        maxTokens: settings.maxTokens,
+        ...settings,
         signal: abortController.signal,
       })) {
         if (chunk.type === 'thinking') {

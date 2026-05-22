@@ -71,6 +71,7 @@ const Components = (() => {
         <span class="msg-name">${escHtml(name)}</span>
         <span class="msg-time">${formatTime(msg.ts)}</span>
         <div class="msg-actions">
+          ${opts.audio ? `<button class="msg-btn" data-action="speak" title="Listen">🔊</button>` : ''}
           <button class="msg-btn" data-action="copy" title="Copy">⎘</button>
           ${opts.editable ? `<button class="msg-btn" data-action="edit" title="Edit">✎</button>` : ''}
           ${opts.deletable ? `<button class="msg-btn" data-action="delete" title="Delete">✕</button>` : ''}
@@ -109,7 +110,7 @@ const Components = (() => {
       <div class="thinking-block collapsed">
         <div class="thinking-toggle">
           <span class="thinking-icon">💭</span>
-          <span class="thinking-label">Thinking</span>
+          <span class="thinking-label">${framework.translate('Thinking')}</span>
           <span class="thinking-preview">${escHtml(preview)}</span>
           <span class="thinking-chevron">▸</span>
         </div>
@@ -284,10 +285,11 @@ const Components = (() => {
         }).join("\n");
     }
     let html = window.sanitizeHtml ? content : escHtml(content);
-    html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) =>
-      `<pre class="code-block"><div class="code-lang">${lang || 'code'}</div><code>${code.trim()}</code><button class="copy-code-btn" onclick="navigator.clipboard.writeText(this.previousElementSibling.textContent)">Copy</button></pre>`
+    html = html.replace(/```(\w*)\n?([\s\S]*?)(```|$)/g, (_, lang, code) =>
+      `<pre class="code-block"><div class="code-lang">${lang || 'code'}</div><code>${window.sanitizeHtml ? escHtml(code.trim()) : code.trim()}</code></pre>`
     );
     html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+    html = html.replace(/\[!\[([^\]]*)\]\(([^)]*)\)\]\(([^)]*)\)/g, '<a href="$3"><img src="$2" alt="$1"></a>');
     html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1">');
     html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
@@ -328,19 +330,27 @@ const Components = (() => {
         .replaceAll('"></iframe>', `?enablejsapi=1"></iframe>`)
         .replaceAll('src="/media/', `src="${framework.backendUrl}/media/`)
         .replaceAll('src="/thumbnail/', `src="${framework.backendUrl}/thumbnail/`)
-        .replaceAll('href="/media/', `src="${framework.backendUrl}/media/`)
+        .replaceAll('href="/media/', `href="${framework.backendUrl}/media/`);
     if (window.sanitizeHtml) {
         html = window.sanitizeHtml(html, sanitizedConfig());
     }
     return `<p>${html}</p>`;
   }
 
+  function formatToolCalls(toolCalls) {
+    if (!toolCalls || !Array.isArray(toolCalls) || toolCalls.length === 0) return '';
+    return toolCalls.map(call => {
+      const name = call.name || call.function?.name || call.tool_name || call.id || 'unknown_tool';
+      const args = call.arguments || call.function?.arguments || call.args || {};
+      const formattedArgs = typeof args === 'string' ? args : JSON.stringify(args, null, 2);
+      return `\n\n🔧 **Tool Call:** \`${name}\`\n\n\`\`\`json\n${formattedArgs}\n\`\`\``;
+    }).join('\n\n');
+  }
+
   function escHtml(str) {
-    return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+    const div = document.createElement('div');
+    div.innerText = str;
+    return div.innerHTML;
   }
 
   function formatTime(ts) {
@@ -349,19 +359,40 @@ const Components = (() => {
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }
 
+  async function updateModels(provider) {
+      Components.toast('Fetching models...', 'info');
+      const models = await API.fetchModels(Store.applyProviderConfig(provider));
+      if (window.convertModel) models.forEach(convertModel);
+      provider.fetchedModels = models;
+      provider.defaultModel = provider.defaultModel || models[0]?.id;
+      Store.upsertProvider(provider);
+      ProvidersPage.renderList();
+      Components.toast(`Fetched ${models.length} models`, 'success');
+      return models;
+  }
+
   function modelSelector(provider, currentModel) {
-    const models = provider?.fetchedModels?.length
+    function setModels(sel, models, defaultModel) {
+      models.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.id || m;
+        opt.textContent = m.label || m.id || m;
+        if ((m.id || m) === (currentModel || defaultModel)) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    }
+    const models = (provider?.fetchedModels?.length
       ? provider.fetchedModels
-      : (provider?.models?.length ? provider.models : [provider?.defaultModel || 'llama-4-scout']);
+      : (provider?.models?.length ? provider.models : null)) || [];
     const sel = document.createElement('select');
     sel.className = 'model-select';
-    models.forEach(m => {
-      const opt = document.createElement('option');
-      opt.value = m;
-      opt.textContent = m;
-      if (m === (currentModel || provider?.defaultModel)) opt.selected = true;
-      sel.appendChild(opt);
-    });
+    if (models.length === 0) {
+      updateModels(provider).then(newModels => {
+        setModels(sel, newModels, provider?.defaultModel);
+      });
+    } else {
+      setModels(sel, models, provider?.defaultModel);
+    }
     return sel;
   }
 
@@ -375,9 +406,17 @@ const Components = (() => {
     const ta = wrap.querySelector('textarea');
     const btn = wrap.querySelector('.send-btn');
     const stopBtn = wrap.querySelector('.stop-btn');
+    btn.dataset.label = btn.innerText;
+    btn.disabled = true;
     ta.addEventListener('input', () => {
       ta.style.height = 'auto';
       ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
+      if (ta.value.trim()) {
+        btn.textContent = btn.dataset.label;
+      } else {
+        btn.textContent = framework.translate('Regenerate');
+      }
+      btn.disabled = false;
     });
     ta.addEventListener('keydown', e => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
@@ -385,7 +424,6 @@ const Components = (() => {
     btn.addEventListener('click', send);
     function send() {
       const val = ta.value.trim();
-      if (!val) return;
       ta.value = '';
       ta.style.height = 'auto';
       onSend(val);
@@ -403,7 +441,6 @@ const Components = (() => {
         stopBtn.style.display = 'none';
         ta.disabled = false;
         btn.disabled = false;
-        btn.textContent = opts.sendLabel || 'Send';
         stopBtn.onclick = null;
       }
     };
@@ -581,5 +618,5 @@ const Components = (() => {
     document.head.appendChild(style);
   }
 
-  return { toast, modal, confirm, renderMessage, renderMarkdown, escHtml, modelSelector, chatInputBar, injectStyles, renderThinkingBlock, updateThinkingBlock, addTypingIndicator, removeTypingIndicator, createImageWithLoader, copyMessageContent };
+  return { toast, modal, confirm, renderMessage, renderMarkdown, escHtml, modelSelector, chatInputBar, injectStyles, renderThinkingBlock, updateThinkingBlock, addTypingIndicator, removeTypingIndicator, createImageWithLoader, copyMessageContent, formatToolCalls, updateModels };
 })();

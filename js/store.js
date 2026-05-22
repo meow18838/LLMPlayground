@@ -23,12 +23,15 @@ const Store = (() => {
         provider.models = provider.models || [];
         provider.fetchedModels = [];
         provider.defaultModel = data.defaultModels[key] || provider.defaultModel;
-        if (data.providerLocalStorage[key]) {
-          provider.apiKey = localStorage.getItem(data.providerLocalStorage[key]);
+        provider.localStorageKey = data.providerLocalStorage[key] || null;
+        provider.checkUrl = data.checkUrls[key] || null;
+        if (provider.localStorageKey && localStorage.getItem(provider.localStorageKey)) {
+          provider.apiKey = localStorage.getItem(provider.localStorageKey);
         }
       }
       delete data.providers.custom;
       Store.setProviders(Object.values(data.providers));
+      Store.setActiveProviderId(document.location.hostname === 'llmplayground.net' ? 'api.airforce' : Object.keys(data.providers)[0]);
       ProvidersPage.renderList();
     });
   }
@@ -55,8 +58,8 @@ const Store = (() => {
     chats: [],
     settings: {
       streamingEnabled: true,
-      temperature: 0.7,
-      maxTokens: 2048,
+      codingTemperature: 0,
+      maxRetries: 2,
       theme: 'dark',
     },
   };
@@ -104,7 +107,25 @@ const Store = (() => {
     localStorage.setItem(KEYS[key], JSON.stringify(value));
   }
 
-  function getProviders() { return get('providers'); }
+  function deleteSettings() {
+    localStorage.removeItem(KEYS['settings']);
+  }
+
+  function applyProviderConfig(provider) {
+    const copy = {...provider};
+    if (!copy.apiKey && provider.backupUrl) {
+      copy.apiKey = localStorage.getItem("session_token");
+      copy.isNotProviderKey = true;
+    }
+    if (copy.apiKey && (copy.apiKey.startsWith("g4f_") || copy.apiKey.startsWith("gfs_"))) {
+      copy.baseUrl = provider.backupUrl || provider.baseUrl;
+    }
+    return copy;
+  }
+
+  function getProviders() {
+    return get('providers');
+  }
   function setProviders(v) { set('providers', v); }
 
   function getActiveProviderId() { return get('activeProvider'); }
@@ -113,11 +134,9 @@ const Store = (() => {
   function getActiveProvider() {
     const providers = getProviders();
     const id = getActiveProviderId();
-    const provider = providers.find(p => p.id === id) || providers[0];
-    if (!provider.apiKey && provider.backupUrl) {
-      provider.apiKey = localStorage.getItem("session_token");
-    }
-    return provider;
+    return applyProviderConfig(
+      providers.find(p => p.id === id) || providers[0]
+    );
   }
 
   function upsertProvider(provider) {
@@ -199,10 +218,10 @@ const Store = (() => {
                   cursor.continue();
               } else {
                   if (conversations.length === 0) {
-                    conversations = get('chats');
+                    conversations.concat(get('chats'));
                     conversations.forEach((c, i)=>{
                       c.added = c.added || Date.now();
-                      c.updated = c.updated || c.added || Date.now() + i;
+                      c.updated = c.updated || c.added;
                       c.items = c.messages || c.items || [];
                       delete c.messages;
                     })
@@ -222,6 +241,16 @@ const Store = (() => {
         console.error("IndexedDB not available:", e);
         return [];
     }
+  }
+
+  async function getLastChat() {
+    const chats = await getChats();
+    for (const chat of chats) {
+      if (chat.type === 'chat') {
+        return chat;
+      }
+    }
+    return null;
   }
 
   const deleteChat = async (id) => {
@@ -245,8 +274,8 @@ const Store = (() => {
     getProviders, setProviders, getActiveProviderId, setActiveProviderId,
     getActiveProvider, upsertProvider, deleteProvider,
     getPersonas, setPersonas, upsertPersona, deletePersona,
-    getChats, getChat, upsertChat, deleteChat,
-    getSettings, setSettings, updateSettings,
-    newId, loadProviders,
+    getChats, getChat, upsertChat, deleteChat, getLastChat,
+    getSettings, setSettings, updateSettings, deleteSettings,
+    newId, loadProviders, applyProviderConfig
   };
 })();

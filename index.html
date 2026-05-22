@@ -3,11 +3,57 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>LLMPlayground – Open-Source AI Chat, Roleplay & Coding Playground</title>
+  <meta name="description" content="LLMPlayground is an open-source AI playground for chat, roleplay, coding assistance, personas, and provider testing in one fast web app.">
+  <meta name="keywords" content="AI playground, LLM playground, AI chat, roleplay AI, coding assistant, OpenAI compatible, gpt4free">
+  <meta name="author" content="LLMPlayground contributors">
+  <meta name="robots" content="index, follow">
+  <meta name="application-name" content="LLMPlayground">
   <meta name="theme-color" content="#0f0f0f">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>LLMPlayground</title>
+  <meta name="apple-mobile-web-app-title" content="LLMPlayground">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="LLMPlayground">
+  <meta property="og:title" content="LLMPlayground – Open-Source AI Chat, Roleplay & Coding Playground">
+  <meta property="og:description" content="Use chat, roleplay, coding, personas, and provider tools in a lightweight open-source AI playground.">
+  <meta property="og:url" content="https://llmplayground.net/">
+  <meta property="og:image" content="https://llmplayground.net/img/logo.svg">
+  <meta property="og:image:alt" content="LLMPlayground logo">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="LLMPlayground – Open-Source AI Chat, Roleplay & Coding Playground">
+  <meta name="twitter:description" content="Open-source AI playground for chatting, roleplay, coding help, personas, and model provider testing.">
+  <meta name="twitter:image" content="https://llmplayground.net/img/logo.svg">
+  <link rel="canonical" href="https://llmplayground.net/">
+  <link rel="icon" href="img/logo.svg" type="image/svg+xml">
+  <link rel="shortcut icon" href="img/logo.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="img/logo.svg">
+  <link rel="manifest" href="site.webmanifest">
   <link rel="stylesheet" href="css/coding-editor.css">
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "LLMPlayground",
+      "url": "https://llmplayground.net/",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "Web",
+      "description": "An open-source AI playground for chat, roleplay, coding assistance, personas, and provider testing.",
+      "image": "https://llmplayground.net/img/logo.svg",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "featureList": [
+        "AI chat",
+        "Roleplay personas",
+        "Coding assistant",
+        "Provider configuration",
+        "Model playground"
+      ]
+    }
+  </script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -164,7 +210,7 @@
       transition: background 0.15s;
       -webkit-tap-highlight-color: transparent;
     }
-    input, textarea, select {
+    input:not([type=radio], [type="checkbox"]), textarea, select {
       background: var(--bg3);
       border: 1px solid var(--border);
       color: var(--text);
@@ -173,7 +219,16 @@
       font-family: inherit;
       outline: none;
       transition: border-color 0.15s;
+      appearance: none;
       -webkit-appearance: none;
+    }
+    input[type="checkbox"].tool-checkbox {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--accent);
+      cursor: pointer;
+      margin-top: 2px;
+      flex-shrink: 0;
     }
     input:focus, textarea:focus, select:focus { border-color: var(--accent); }
     input::placeholder, textarea::placeholder { color: var(--text2); }
@@ -208,8 +263,9 @@
     @keyframes slideModalUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
     .modal h2 { font-size: 17px; margin-bottom: 16px; }
     .form-group { margin-bottom: 14px; }
-    .form-group label { display: block; font-size: 13px; color: var(--text2); margin-bottom: 6px; }
-    .form-group input, .form-group textarea, .form-group select { width: 100%; padding: 10px 12px; }
+    .form-group label { font-size: 13px; color: var(--text2); margin: 0 6px 6px 0; }
+    .form-group label:not(.radio-label) { display: block; }
+    .form-group input:not([type=radio]), .form-group textarea, .form-group select { width: 100%; padding: 10px 12px; }
     .form-group textarea { resize: vertical; min-height: 80px; }
 
     @media (min-width: 768px) {
@@ -271,8 +327,8 @@
       <a href="#/providers" data-route="/providers">Providers</a>
     </div>
     <div class="spacer"></div>
-    <button class="translate-btn" id="btn-translate" onclick="btnTranslate(this)">🌐 Translate</button>
-    <button class="translate-btn" id="btn-delete-translate" onclick="deleteTranslations(); window.location.reload()">✕ Reset</button>
+    <a class="translate-btn" id="btn-translate" onclick="btnTranslate(this); return false;" title="Translate">🌐</a>
+    <button class="translate-btn notranslate" id="auth-status-btn" onclick="window.location.hash='#/providers'" title="Login">Login</button>
     <span class="provider-badge notranslate" id="active-provider-badge" onclick="window.location.hash='#/providers'">Loading...</span>
   </nav>
   <div id="app">
@@ -310,8 +366,19 @@
       });
     });
   </script>
+  <script type="module" async>
+    // query() (translations.js) calls this so API responses can emit userTierUpdate data used by
+    // the auth/tier UI (tier badge and limits) after authenticated requests.
+    import { captureUserTierHeaders } from 'https://g4f.dev/dist/js/providers.js';
+    window.captureUserTierHeaders = captureUserTierHeaders;
+  </script>
+  <script type="module" defer>
+    import { convertModel } from 'https://g4f.dev/dist/js/model.js';
+    window.convertModel = convertModel;
+  </script>
   <script src="js/store.js"></script>
   <script src="js/api.js"></script>
+  <script src="https://g4f.dev/dist/js/mcp-client.js"></script>
   <script src="js/translations.js"></script>
   <script src="js/components.js"></script>
   <script src="js/editor-panel.js"></script>
