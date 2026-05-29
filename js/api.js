@@ -349,6 +349,9 @@ const API = (() => {
         }
         return;
       } catch (err) {
+        if ([401, 402, 429].includes(err.status)) {
+          throw err;
+        }
         lastError = err;
       }
     }
@@ -515,7 +518,7 @@ const API = (() => {
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`API error ${res.status}: ${err}`);
+      throw Object.apply(new Error(`API error ${res.status}: ${err}`), { status: res.status });
     }
 
     const reader = res.body.getReader();
