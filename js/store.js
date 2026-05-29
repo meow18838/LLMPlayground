@@ -50,7 +50,7 @@ const Store = (() => {
         type: 'openai',
         models: [],
         fetchedModels: [],
-        defaultModel: 'llama-4-scout',
+        defaultModel: 'gpt-4o-mini',
       },
     ],
     activeProvider: 'api.airforce',
@@ -119,6 +119,10 @@ const Store = (() => {
     }
     if (copy.apiKey && (copy.apiKey.startsWith("g4f_") || copy.apiKey.startsWith("gfs_"))) {
       copy.baseUrl = provider.backupUrl || provider.baseUrl;
+    }
+    if (!copy.apiKey && copy.baseUrl && copy.baseUrl.startsWith("https://g4f.space/")) {
+      copy.apiKey = localStorage.getItem("session_token");
+      copy.isNotProviderKey = true;
     }
     return copy;
   }

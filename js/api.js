@@ -496,7 +496,7 @@ const API = (() => {
     if (provider.apiKey) headers['Authorization'] = `Bearer ${provider.apiKey}`;
   
     const body = {
-      model: model || provider.defaultModel || 'llama-4-scout',
+      model: model || provider.defaultModel || 'gpt-4o-mini',
       messages: filterMessages(messages),
       stream: true
     };
@@ -810,7 +810,7 @@ const API = (() => {
     if (provider.apiKey) headers['Authorization'] = `Bearer ${provider.apiKey}`;
 
     const body = {
-      model: model || provider.defaultModel || 'llama-4-scout',
+      model: model || provider.defaultModel || 'gpt-4o-mini',
       messages: messages.map(m => ({ role: m.role, content: m.content })),
     };
     if (options.temperature !== undefined) body.temperature = options.temperature;
