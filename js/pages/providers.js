@@ -71,6 +71,7 @@ const ProvidersPage = (() => {
           <button class="btn btn-secondary btn-sm" data-auth-provider="discord">Discord</button>
           <button class="btn btn-secondary btn-sm" data-auth-provider="huggingface">HuggingFace</button>
           <button class="btn btn-secondary btn-sm" data-auth-provider="pollinations">Pollinations</button>
+          <button class="btn btn-secondary btn-sm" data-auth-provider="airforce">Airforce</button>
         `}
       </div>
     `;
@@ -104,6 +105,7 @@ const ProvidersPage = (() => {
       anthropic: 'Anthropic',
       responses: 'Responses API',
       google: 'Google AI',
+      puter: 'Puter'
     };
     return labels[type] || type || 'OpenAI';
   }

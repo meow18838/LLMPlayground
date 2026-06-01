@@ -106,12 +106,38 @@ const API = (() => {
 
   async function checkProvider(provider) {
     console.log('Checking provider:', provider);
+    if (provider.id === 'pollinations') {
+      try {
+        const headers = provider.apiKey ? { 'Authorization': `Bearer ${provider.apiKey}` } : {};
+        result = await fetch(`${provider.baseUrl}/quota`, { headers });
+        if (result.ok) {
+          const data = await result.json();
+          const creditsInfo = `${framework.translate("Credits:")} ${data.balance.toFixed(2)} Pollen`;
+          Components.toast(creditsInfo, data.balance > 0.1 ? 'success' : 'error');
+          return provider.type || 'openai';
+        }
+      } catch {}
+    }
+    if (provider.id === 'puter') {
+      provider.type = 'puter';
+      const { token } = await signInPuter();
+      provider.apiKey = token;
+    }
     if (provider.apiKey && provider.checkUrl && !provider.isNotProviderKey) {
       let result = null;
       try {
         const headers = { 'Authorization': `Bearer ${provider.apiKey}` };
         result = await fetch(provider.checkUrl, { headers });
-        if (result.ok) return 'openai';
+        if (result.ok) {
+          const data = await result.json();
+          if (data.allowanceInfo) {
+            const percent = (data.allowanceInfo.remaining / data.allowanceInfo.monthUsageAllowance) * 100;
+            const total = (data?.allowanceInfo?.remaining || 0) / 1e8;
+            const creditsInfo = `${framework.translate("Credits:")} ${total.toFixed(2)}$, ${framework.translate("Remaining:")} ${percent.toFixed(2)}%`;
+            Components.toast(creditsInfo, percent > 10 ? 'success' : 'error');
+          }
+          return provider.type || 'openai';
+        }
       } catch {}
       if (result && result.status === 401) {
         throw Object.assign(new Error('Unauthorized'), { status: 401 });
@@ -323,8 +349,70 @@ const API = (() => {
     }));
   }
 
+  async function injectPuter() {
+    return new Promise((resolve, reject) => {
+        if (typeof window === 'undefined') {
+            reject(new Error('Puter can only be used in a browser environment'));
+            return;
+        }
+        if (window.puter) {
+            resolve(window.puter);
+            return;
+        }
+        var tag = document.createElement('script');
+        tag.src = "https://js.puter.com/v2/";
+        tag.onload = () => {
+            resolve(window.puter);
+        }
+        tag.onerror = reject;
+        var firstScriptTag = document.getElementsByTagName('script')[0];
+        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+    });
+  }
+
+  async function signInPuter(options = {attempt_temp_user_creation: true}) {
+      const puter = await injectPuter();
+      return puter.auth.signIn(options).then((res) => {
+          console.log('PuterJS signed in:', res);
+          return res;
+      });
+  }
+
+  async function* streamChatPuter(provider, messages, model, options = {}) {
+    const puter = await injectPuter();
+    const body = {
+      model: model || provider.defaultModel || 'gpt-4o-mini',
+      messages: filterMessages(messages),
+      stream: true
+    };
+    if (options.temperature !== undefined) body.temperature = options.temperature;
+    if (options.maxTokens) body.max_tokens = options.maxTokens;
+    if (options.reasoningEffort) body.reasoning_effort = options.reasoningEffort;
+    for await (const chunk of await puter.ai.chat(filterMessages(messages), false, body)) {
+      if (chunk.reasoning) {
+        yield { type: 'thinking', content: chunk.reasoning };
+      }
+      if (chunk.text) {
+        yield { type: 'text', content: Array.isArray(chunk.text) && chunk.text ? chunk.text[0].text : chunk.text };
+      }
+      if (chunk.tool_use) {
+        yield { type: 'tool_calls', tool_calls: [{
+            type: 'function', function: {
+                name: chunk.name,
+                arguments: chunk.input
+            }
+        }] };
+      }
+    }
+  }
+
   async function* streamChat(provider, messages, model, options = {}) {
     const type = provider.endpointType || provider.type || 'openai';
+
+    if (type === 'puter') {
+      yield* streamChatPuter(provider, messages, model, options);
+      return;
+    }
 
     const ordered = [];
     if (type === 'anthropic') ordered.push('anthropic', 'openai', 'google', 'responses');
@@ -349,6 +437,9 @@ const API = (() => {
         }
         return;
       } catch (err) {
+        if ([401, 402, 429].includes(err.status)) {
+          throw err;
+        }
         lastError = err;
       }
     }
@@ -493,7 +584,7 @@ const API = (() => {
     if (provider.apiKey) headers['Authorization'] = `Bearer ${provider.apiKey}`;
   
     const body = {
-      model: model || provider.defaultModel || 'llama-4-scout',
+      model: model || provider.defaultModel || 'gpt-4o-mini',
       messages: filterMessages(messages),
       stream: true
     };
@@ -515,7 +606,7 @@ const API = (() => {
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`API error ${res.status}: ${err}`);
+      throw Object.assign(new Error(`OpenAI error ${res.status}: ${err}`), { status: res.status });
     }
 
     const reader = res.body.getReader();
@@ -602,7 +693,7 @@ const API = (() => {
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`Anthropic error ${res.status}: ${err}`);
+      throw Object.assign(new Error(`Anthropic error ${res.status}: ${err}`), { status: res.status });
     }
 
     const reader = res.body.getReader();
@@ -689,7 +780,7 @@ const API = (() => {
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`Google error ${res.status}: ${err}`);
+      throw Object.assign(new Error(`Google error ${res.status}: ${err}`), { status: res.status });
     }
 
     const reader = res.body.getReader();
@@ -757,7 +848,7 @@ const API = (() => {
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`Responses API error ${res.status}: ${err}`);
+      throw Object.assign(new Error(`Responses API error ${res.status}: ${err}`), { status: res.status });
     }
 
     const reader = res.body.getReader();
@@ -807,7 +898,7 @@ const API = (() => {
     if (provider.apiKey) headers['Authorization'] = `Bearer ${provider.apiKey}`;
 
     const body = {
-      model: model || provider.defaultModel || 'llama-4-scout',
+      model: model || provider.defaultModel || 'gpt-4o-mini',
       messages: messages.map(m => ({ role: m.role, content: m.content })),
     };
     if (options.temperature !== undefined) body.temperature = options.temperature;
@@ -826,7 +917,7 @@ const API = (() => {
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`API error ${res.status}: ${err}`);
+      throw Object.assign(new Error(`OpenAI error ${res.status}: ${err}`), { status: res.status });
     }
 
     const data = await res.json();

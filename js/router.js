@@ -187,6 +187,9 @@ const PlaygroundAuth = (() => {
     if (user?.provider === 'huggingface' && user?.access_token) {
       setProviderApiKey('huggingface', user.access_token);
     }
+    if (user?.airforce?.access_token) {
+      setProviderApiKey('api.airforce', user.airforce.access_token);
+    }
     setUser(user || getUser());
   }
 

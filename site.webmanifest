@@ -2,7 +2,6 @@
   "name": "LLMPlayground",
   "short_name": "LLMPlayground",
   "description": "Open-source AI playground for chat, roleplay, coding, personas, and provider testing.",
-  "start_url": "/",
   "display": "standalone",
   "background_color": "#0f0f0f",
   "theme_color": "#0f0f0f",
