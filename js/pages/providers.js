@@ -105,6 +105,7 @@ const ProvidersPage = (() => {
       anthropic: 'Anthropic',
       responses: 'Responses API',
       google: 'Google AI',
+      puter: 'Puter'
     };
     return labels[type] || type || 'OpenAI';
   }

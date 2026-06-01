@@ -19,7 +19,7 @@ const Store = (() => {
         provider.baseUrl = provider.backupUrl || provider.baseUrl || `https://g4f.space/api/${key}`;
         provider.defaultModel = data.defaultModels[key] || provider.defaultModel;
         provider.baseUrl = provider.baseUrl.replace('{model}', provider.defaultModel)
-        provider.type = provider.type || 'openai';
+        provider.type = key === 'puter' ? key : (provider.type || 'openai');
         provider.models = provider.models || [];
         provider.fetchedModels = [];
         provider.defaultModel = data.defaultModels[key] || provider.defaultModel;
