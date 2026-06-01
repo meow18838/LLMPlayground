@@ -518,7 +518,7 @@ const API = (() => {
 
     if (!res.ok) {
       const err = await res.text();
-      throw Object.apply(new Error(`API error ${res.status}: ${err}`), { status: res.status });
+      throw Object.assign(new Error(`OpenAI error ${res.status}: ${err}`), { status: res.status });
     }
 
     const reader = res.body.getReader();
@@ -605,7 +605,7 @@ const API = (() => {
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`Anthropic error ${res.status}: ${err}`);
+      throw Object.assign(new Error(`Anthropic error ${res.status}: ${err}`), { status: res.status });
     }
 
     const reader = res.body.getReader();
@@ -692,7 +692,7 @@ const API = (() => {
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`Google error ${res.status}: ${err}`);
+      throw Object.assign(new Error(`Google error ${res.status}: ${err}`), { status: res.status });
     }
 
     const reader = res.body.getReader();
@@ -760,7 +760,7 @@ const API = (() => {
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`Responses API error ${res.status}: ${err}`);
+      throw Object.assign(new Error(`Responses API error ${res.status}: ${err}`), { status: res.status });
     }
 
     const reader = res.body.getReader();
@@ -829,7 +829,7 @@ const API = (() => {
 
     if (!res.ok) {
       const err = await res.text();
-      throw new Error(`API error ${res.status}: ${err}`);
+      throw Object.assign(new Error(`OpenAI error ${res.status}: ${err}`), { status: res.status });
     }
 
     const data = await res.json();
